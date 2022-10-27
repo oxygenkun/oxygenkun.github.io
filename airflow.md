@@ -1,0 +1,365 @@
+---
+title: airlfow
+theme: white
+---
+# 
+<!-- .slide: data-background="./image/front.png" -->
+
+<img src="./image/airflow_wordmark_1.png" height="200" />
+
+
+**大数据领域非常热门的开源任务编排框架**
+
+以code形式构建和执行调度工作流
+
+[https://airflow.ecdataway.com/](https://airflow.ecdataway.com/ "https://airflow.ecdataway.com/")
+
+-- 杨劲鸣
+
+---
+
+## 主要场景：
+
+*   data pipeline：ETL
+
+*   data analysis
+
+*   data preparing for machine learning
+
+----
+
+### 优势：
+
+Web UI 提供
+
+*   任务监控
+
+*   日志查询
+
+*   工作流管理
+
+*   任务依赖管理
+
+----
+
+### 对比服务器cron配置：
+
+
+可在网页直接观察每日任务执行情况
+
+![](image/image_0N1YIA8liK.png)
+
+可以做复杂的调度依赖管理
+
+![](<image/dags1.png>)
+
+
+---
+
+##  架构与核心概念
+
+- **有向无环图 DAG** （ Directed Acrylic Graphs）
+
+- **DAG** 细分成不同的tasks任务
+
+![](./image/edge_label_example.png)
+[参考](https://airflow.apache.org/docs/apache-airflow/2.4.2/concepts/overview.html)
+
+
+----
+
+### 架构
+
+![](./image/arch-diag-basic.png)
+
+
+----
+
+### 定义tasks
+
+airflow 提供丰富的class
+
+- Operators
+
+    `BashOperator`, `PythonOperator`, `MysqlOperator`, `SparkOperator` ...
+
+- Sensor
+
+    `FileSensor`, `ExternalTaskSensor` ...
+
+----
+
+#### 定义控制流
+
+airflow提供的python语法述task之间依赖关系
+
+
+```python
+task_a = ...
+task_b = ...
+task_c = ...
+task_d = ...
+
+task_a >> [task_b, task_c] >> task_d
+```
+
+![](./image/basic-dag.png)
+
+----
+
+[example\_complex - Graph - Airflow (ecdataway.com)](https://airflow.ecdataway.com/dags/example_complex/graph)
+
+----
+
+#### 定义调度间隔
+
+- cron表达式语法
+
+    ```
+    "0 1 * * *"
+    ```
+
+- 预设
+
+    ```
+    "@once", 
+    "@hourly" 
+    ...
+    ```
+----
+
+#### 调度启停
+
+定义DAG的时候要考虑到幂等性和原子性
+
+![](./image/cut2.png)
+
+----
+
+#### 模板导入宏变量
+
+通过jinja模板引擎传入宏变量
+
+```python
+templated_command = dedent(
+    """
+{% for i in range(5) %}
+    echo "{{ ds }}"
+    echo "{{ macros.ds_add(ds, 7)}}"
+{% endfor %}
+"""
+)
+
+t3 = BashOperator(
+    task_id='templated',
+    depends_on_past=False,
+    bash_command=templated_command,
+)
+```
+
+---
+
+#  airflow dag 编写
+
+```python [1-8|9-38|33-43|45-58|59-61|62-75]
+from datetime import datetime, timedelta
+from textwrap import dedent
+import pendulum
+# The DAG object; we'll need this to instantiate a DAG
+from airflow import DAG
+
+# Operators; we need this to operate!
+from airflow.operators.bash import BashOperator
+with DAG(
+    'tutorial',
+    description='A simple tutorial DAG',
+    schedule_interval="0 1 * * *",
+    start_date=pendulum.datetime(2022, 9, 22, tz='Asia/Shanghai'),
+    catchup=False,
+    tags=['example'],
+    # 传入给task的默认参数
+    default_args={
+        'depends_on_past': False,
+        'email': ['airflow@example.com'],
+        'email_on_failure': False,
+        'email_on_retry': False,
+        'retries': 1,
+        'retry_delay': timedelta(minutes=5),
+        # 'wait_for_downstream': False,
+        # 'execution_timeout': timedelta(seconds=300),
+        # 'on_failure_callback': some_function,
+        # 'on_success_callback': some_other_function,
+        # 'on_retry_callback': another_function,
+        # 'trigger_rule': 'all_success'
+    },
+) as dag:
+
+    t1 = BashOperator(
+        task_id='print_date',
+        bash_command='date',
+    )
+
+    t2 = BashOperator(
+        task_id='sleep',
+        depends_on_past=False,
+        bash_command='sleep 5',
+        retries=3,
+    )
+    
+    templated_command = dedent(
+        """
+    {% for i in range(5) %}
+        echo "{{ ds }}"
+        echo "{{ macros.ds_add(ds, 7)}}"
+    {% endfor %}
+    """
+    )
+
+    t3 = BashOperator(
+        task_id='templated',
+        depends_on_past=False,
+        bash_command=templated_command,
+    )
+    
+    t1 >> [t2, t3]
+    
+    t1.doc_md = dedent(
+        """\
+    #### Task Documentation
+    You can document your task using the attributes `doc_md` (markdown),
+    `doc` (plain text), `doc_rst`, `doc_json`, `doc_yaml` which gets
+    rendered in the UI's Task Instance Details page.
+    ![img](http://montcs.bloomu.edu/~bobmon/Semesters/2012-01/491/import%20soul.png)
+    **Image Credit:** Randall Munroe, [XKCD](https://xkcd.com/license.html)
+    """
+    )
+    dag.doc_md = __doc__  # providing that you have a docstring at the beginning of the DAG; OR
+    dag.doc_md = """
+    This is a documentation placed anywhere
+    """ # otherwise, type it like this
+
+```
+
+----
+
+[查看DAG](https://airflow.ecdataway.com/dags/tutorial_dag/grid)
+
+---
+
+# 一些细节
+
+## Python Operator
+
+1. 基础 API（1.0版本）
+2. taskflow API（2.0版本）
+
+----
+
+基础PythonOperator定义
+
+```python
+from airflow.operators.python import PythonOperator
+
+def insert_category_mysql(month):
+    pass
+
+task_category = PythonOperator(
+        task_id='task_category',
+        python_callable=insert_category_mysql,
+        op_kwargs={
+            'month': '{{data_interval_start.in_timezone("Asia/Shanghai") | ds}}'
+        }
+    )
+```
+----
+
+taskflow定义
+
+```python
+from airflow.decorators import task
+
+@task
+def task_category(data_interval_start=None):
+    month = data_interval_start.in_timezone("Asia/Shanghai").to_date_string()
+    pass
+
+task_category = task_category()
+```
+
+----
+
+### 渐进式整合Python脚本
+
+| 不耦合 | 部分耦合 | 完全耦合 |
+| -------| ----- | ---- |
+| `BashOperator` 调用Python脚本 | `PythonOperator` 调用Python函数 | TaskFlow API 装饰器封装 Python函数 |
+
+----
+
+### 最佳实践
+
+将业务逻辑和调度定义逻辑分开
+
+在调度逻辑中使用业务函数
+
+- `dag_some_task.py` : 调度脚本。定义airflow相关的DAG、Tasks等。
+
+- `some_task.py` : 业务逻辑脚本。将业务封装成不同的函数。
+
+---
+
+# DAGs仓库
+
+[Airflow需要的DAGs仓库](https://git.sh.nint.com/yang.jingming/airflow-dags)
+
+```
+- src/
+  - utils/
+  - dags/
+    - yjm/
+      - dags_1.py
+      ...     
+    - yxp/
+```
+
+> 服务器自动同步仓库代码
+
+----
+
+# toolkit仓库
+
+解决不同Python仓库都要使用的公司工具类
+
+在各个仓库不一致的问题
+
+```
+- config
+ ...
+- lib
+ - PyMysqlPool.py
+ - MyCkClient.py
+ ...
+```
+
+[nint_tookkit仓库地址](https://git.sh.nint.com/yang.jingming/nint_toolkit)
+
+----
+
+安装
+
+```bash
+pip install \
+git+ssh://git@git.sh.nint.com/yang.jingming/nint_toolkit.git@master
+```
+
+使用
+
+```python
+from nint_toolkit.lib.MyCkClient import MyCkClient
+```
+
+---
+
+谢谢
+
+Q&A
