@@ -14,8 +14,6 @@ theme: white
 
 [https://airflow.ecdataway.com/](https://airflow.ecdataway.com/ "https://airflow.ecdataway.com/")
 
--- 杨劲鸣
-
 ---
 
 ## 主要场景：
@@ -28,31 +26,61 @@ theme: white
 
 ----
 
-### 优势：
+#### 业务上遇到的问题
 
-Web UI 提供
+- 放在服务器的cron脚本是否正常在运行？
 
-*   任务监控
+- 有复杂先依赖关系的脚本，怎么保证先后顺序？
 
-*   日志查询
-
-*   工作流管理
-
-*   任务依赖管理
+- 脚本分散在各个服务器，难以管理。
 
 ----
 
-### 对比服务器cron配置：
+### 对比服务器配置cron：
 
-
-可在网页直接观察每日任务执行情况
+* 可在网页直接观察每日任务执行情况
 
 ![](image/image_0N1YIA8liK.png)
 
-可以做复杂的调度依赖管理
+----
+
+### 对比服务器配置cron：
+
+* 可以网页查看运行日志
+
+![](image/log.png)
+
+----
+
+### 对比服务器配置cron：
+
+* 可以做复杂的调度依赖管理
 
 ![](<image/dags1.png>)
 
+----
+
+### 对比服务器配置cron：
+
+* 可以启停重跑任务
+
+![](<image/log.png>)
+
+[演示](https://airflow.ecdataway.com/dags/tutorial/grid)
+
+----
+
+#### 业务上的主要实践
+
+场景：对京东提供全量数据
+
+保证ELT当中的**E**xtract和**L**oad部分稳定运行。
+
+- Data Pipeline 托管大部分（80%）的数据调度任务
+
+- DQC (data quality check) 托管数据质量检测任务
+
+- Data Backup 托管每日Clikchouse数据备份任务以及MySQL主从备份状态监控
 
 ---
 
@@ -63,8 +91,6 @@ Web UI 提供
 - **DAG** 细分成不同的tasks任务
 
 ![](./image/edge_label_example.png)
-[参考](https://airflow.apache.org/docs/apache-airflow/2.4.2/concepts/overview.html)
-
 
 ----
 
@@ -79,13 +105,15 @@ Web UI 提供
 
 airflow 提供丰富的class
 
-- Operators
+- Operators：执行模块
 
     `BashOperator`, `PythonOperator`, `MysqlOperator`, `SparkOperator` ...
 
-- Sensor
+- Sensor：特殊的Operator，只有监控触发机制
 
     `FileSensor`, `ExternalTaskSensor` ...
+
+<img src="./image/edge_label_example.png" height="100" />
 
 ----
 
@@ -95,10 +123,10 @@ airflow提供的python语法述task之间依赖关系
 
 
 ```python
-task_a = ...
-task_b = ...
-task_c = ...
-task_d = ...
+task_a = ... #可以是一个sensor监控一个条件是否存在
+task_b = ... #operator1，从DB1存到DB2
+task_c = ... #operator2，从DB3存到DB2
+task_d = ... #operator3，DB2合并数据到目标表
 
 task_a >> [task_b, task_c] >> task_d
 ```
@@ -248,7 +276,17 @@ with DAG(
 
 # 一些细节
 
-## Python Operator
+----
+
+### 渐进式整合Python脚本
+
+| 不耦合 | 部分耦合 | 完全耦合 |
+| -------| ----- | ---- |
+| `BashOperator` 调用Python脚本 | `PythonOperator` 调用Python函数 | TaskFlow API 装饰器封装 Python函数 |
+
+----
+
+## 不同风格的Python Operator
 
 1. 基础 API（1.0版本）
 2. taskflow API（2.0版本）
@@ -288,14 +326,6 @@ task_category = task_category()
 
 ----
 
-### 渐进式整合Python脚本
-
-| 不耦合 | 部分耦合 | 完全耦合 |
-| -------| ----- | ---- |
-| `BashOperator` 调用Python脚本 | `PythonOperator` 调用Python函数 | TaskFlow API 装饰器封装 Python函数 |
-
-----
-
 ### 最佳实践
 
 将业务逻辑和调度定义逻辑分开
@@ -331,6 +361,8 @@ task_category = task_category()
 解决不同Python仓库都要使用的公司工具类
 
 在各个仓库不一致的问题
+
+> 同一个函数，有的仓库会直接抛出异常，另一个仓库居然打印log后直接执行。
 
 ```
 - config
